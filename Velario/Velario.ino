@@ -1,6 +1,6 @@
 /*************************************************** 
 Ultimo dia 05/04/2019
-Para las monedas el valor de creditos es:
+Para las _monedas el valor de _creditos es:
 2 - 20 céntimos
 3 - 50 céntimos
 4 - 1 Euro
@@ -11,11 +11,12 @@ Para las monedas el valor de creditos es:
 #include <TimedAction.h>
 
 //Para testear
-#define DEBUG false
+#define DEBUG
 //Pin de interrupción
 #define PIN_MONEDERO 2
 //Tiempo que permanece la vela encendida
 #define TIEMPOVELAENCENDIDA 1000UL*180 //3 minutos
+
 //Cantidad de velas encendida por tipo de moneda
 #define VEINTE 1
 #define CINCUENTA 3
@@ -25,371 +26,287 @@ Para las monedas el valor de creditos es:
 #define NUMDISPOSITIVOS 5
 #define NUMCANALES 16
 
-unsigned int NUMVELASTOTAL = 72;
-
-volatile bool monedaInsertada = false;
-volatile byte creditos = 0;
-volatile unsigned long ultimoTiempocreditos = 0;
+#define MAX_NUM_VELAS 72
 
 //Estructura de una vela.
 typedef struct{
-  unsigned short numero;
-  unsigned short pwm;
-  unsigned long inicio;
-  unsigned long fin;
-  bool activada;
-}vela;
+	unsigned short numero;
+	unsigned short pwm;
+	unsigned long inicio;
+	unsigned long fin;
+	bool activada;
+} vela_t;
 
-vela velas[NUMDISPOSITIVOS][NUMCANALES];
-Adafruit_PWMServoDriver pwm[NUMDISPOSITIVOS];
+unsigned int NUMVELASTOTAL = 72;
 
-unsigned int monedas[10];
-int indice = -1;
+volatile bool _monedaInsertada = false;
+volatile byte _creditos = 0;
+volatile unsigned long _ultimoTiempocreditos = 0;
 
-void interrupcionMonedero(){
+static vela_t _velas[NUMDISPOSITIVOS][NUMCANALES];
+static Adafruit_PWMServoDriver _pwm[NUMDISPOSITIVOS];
 
-  creditos++;
-  
-  if (creditos <= 1){
-    monedaInsertada = false;
-    creditos = 1;
-  }
-  else{
-    monedaInsertada = true;
-  }
+static unsigned int _monedas[10];
+static int _indice = -1;
 
-  ultimoTiempocreditos = millis();
-  
+void interrupcionMonedero(void)
+{
+	// Incrementar _creditos de manera segura
+    noInterrupts();
+	_creditos++;
+    interrupts();
+
+	if (_creditos <= 1){
+		_monedaInsertada = false;
+		_creditos = 1;
+	} else{
+		_monedaInsertada = true;
+	}
+
+	_ultimoTiempocreditos = millis();
 }
 
-void check(){
+void check(void)
+{
+	unsigned long ultimoTiempo = millis() - _ultimoTiempocreditos;
 
-  unsigned long ultimoTiempo = millis() - ultimoTiempocreditos;
+	if (!_monedaInsertada) {
+		return;
+	}
 
-  if( monedaInsertada == true and creditos < 2){
-    if(DEBUG == true){
-      Serial.print("Créditos Falsos: ");
-      Serial.println(creditos);
-    }
-    creditos = 0;
-    monedaInsertada = false;
-  }
-  
-  if( monedaInsertada == true and ultimoTiempo > 200 and creditos >= 2){
-    indice++;
-    
-    monedas[indice] = creditos;
-    if(DEBUG == true){
-      Serial.print("Créditos: ");
-      Serial.println(creditos);
-    }
+	if (ultimoTiempo <= 200) {
+		return;
+	}
 
-    if(DEBUG == true){
+	if (_creditos < 2) {
+#ifdef DEBUG
+		Serial.print("Créditos Falsos: ");
+		Serial.println(_creditos);
+#endif
+		_creditos = 0;
+		// Resetear el estado de la moneda insertada
+		_monedaInsertada = false;
+	}
+	
+	// Incrementar el índice y registrar los créditos
+	_indice++;
 
-      Serial.print("Insertados: ");
-      switch(creditos){
-        case 3:
-          Serial.println("20 centimos");
-          break;
-        case 5:
-          Serial.println("50 centimos");
-          break;
-        case 7:
-          Serial.println("1 Euro");
-          break;
-        case 9:
-          Serial.println("2 Euros");
-          break;
-        default:
-          creditos = 0;
-        break;
-      }
-    }  
+	_monedas[_indice] = _creditos;
 
-    creditos=0;
-  }
+#ifdef DEBUG
+	Serial.print("Créditos: ");
+	Serial.println(_creditos);
 
+	Serial.print("Insertados: ");
+	switch(_creditos){
+		case 3:
+			Serial.println("20 centimos");
+			break;
+		case 5:
+			Serial.println("50 centimos");
+			break;
+		case 7:
+			Serial.println("1 Euro");
+			break;
+		case 9:
+			Serial.println("2 Euros");
+			break;
+		default:
+			_creditos = 0;
+		break;
+	}
+#endif
+
+	// Resetear créditos después de procesar
+    _creditos = 0;
 }
 
 //Para pedir cada 200 ms la función check
-TimedAction timedAction = TimedAction(200, check); 
+static TimedAction _timedAction = TimedAction(200, check); 
 
-void setup() {
+void setup(void)
+{
+#ifdef DEBUG
+	Serial.begin(9600);
+#endif
 
-  if(DEBUG == true)
-    Serial.begin(9600);
+	/* Inicializar PWM */
+	for (byte i = 0 ; i < NUMDISPOSITIVOS ; i++){
+		_pwm[i] = Adafruit_PWMServoDriver((0x40) + i);
+		_pwm[i].begin();
+		_pwm[i].setPWMFreq(100);
+	}
 
-    for (byte i = 0 ; i < NUMDISPOSITIVOS ; i++){
-      pwm[i] = Adafruit_PWMServoDriver((0x40)+i);
-      pwm[i].begin();
-      pwm[i].setPWMFreq(100);
-  }
-
-  Wire.setClock(400000);
+	Wire.setClock(400000);
  
-  //Inicializar matriz de velas
-  for (unsigned int i = 0 ; i < NUMDISPOSITIVOS ; i++){
-    for (unsigned int j = 0 ; j < NUMCANALES ; j++){
-      velas[i][j].numero = j;
-      velas[i][j].pwm = 0;
-      velas[i][j].inicio = 0;
-      velas[i][j].fin = 0;
-      velas[i][j].activada = false;
-      pwm[i].setPWM(velas[i][j].numero, 0, 0 );
-    }
-  }
+	//Inicializar matriz de _velas
+	for (unsigned int i = 0 ; i < NUMDISPOSITIVOS ; i++){
+		for (unsigned int j = 0 ; j < NUMCANALES ; j++){
+			_velas[i][j].numero = j;
+			_velas[i][j].pwm = 0;
+			_velas[i][j].inicio = 0;
+			_velas[i][j].fin = 0;
+			_velas[i][j].activada = false;
+			_pwm[i].setPWM(_velas[i][j].numero, 0, 0 );
+		}
+	}
 
-  attachInterrupt(digitalPinToInterrupt(PIN_MONEDERO), interrupcionMonedero, RISING);
-  creditos = 0;
+	attachInterrupt(digitalPinToInterrupt(PIN_MONEDERO), interrupcionMonedero, RISING);
+	_creditos = 0;
 
-  //Dejar la primera vela encendida.
-  velas[0][0].activada = true;
-  pwm[0].setPWM(velas[0][0].numero, 0, 4016);
-  
+	//Dejar la primera vela encendida.
+	_velas[0][0].activada = true;
+	_pwm[0].setPWM(_velas[0][0].numero, 0, 4016);
+	
 }
 
 void loop() {
-  //Chequear cuanto tiempo llevan las velas encendidas.
+	//Chequear cuanto tiempo llevan las _velas encendidas.
 
-  timedAction.check();
+	_timedAction.check();
 
-  while(indice > -1){
-    if(DEBUG == true){
-      Serial.println("Antes");
-      for (int x = 0 ; x <= indice; x++){
-          Serial.print("Monedas[");
-          Serial.print(x);
-          Serial.print("]= ");
-          Serial.println(monedas[x]);
-      }
-      Serial.println("----------");
-      
-      Serial.print("Índice loop: ");
-      Serial.println(indice);
-    }
-    
-    activarVelas(monedas[0]);
-    for (int i=0; i<= indice; i++){
-        monedas[i] = monedas[i+1];
-    }
+	while (_indice > -1) {
 
-    if(DEBUG == true){
-      Serial.println("Después");
-      for (int x = 0 ; x < indice; x++){
-          Serial.print("Monedas[");
-          Serial.print(x);
-          Serial.print("]= ");
-          Serial.println(monedas[x]);
-      }
-     Serial.println();
-    }
-   indice--;
-   comprobarTiempoParaApagar( millis() ); 
-  }
+#ifdef DEBUG
+		Serial.println("Antes");
+		for (int x = 0 ; x <= _indice; x++){
+			Serial.print("Monedas[");
+			Serial.print(x);
+			Serial.print("]= ");
+			Serial.println(_monedas[x]);
+		}
 
-   comprobarTiempoParaApagar( millis() ); 
+		Serial.println("----------");
+		
+		Serial.print("Índice loop: ");
+		Serial.println(_indice);
+#endif
+		
+		activarVelas(_monedas[0]);
 
+		for (int i=0; i<= _indice; i++){
+				_monedas[i] = _monedas[i+1];
+		}
+
+#ifdef DEBUG
+		Serial.println("Después");
+		for (int x = 0 ; x < _indice; x++){
+			Serial.print("Monedas[");
+			Serial.print(x);
+			Serial.print("]= ");
+			Serial.println(_monedas[x]);
+		}
+		Serial.println();
+#endif
+		_indice--;
+
+		comprobarTiempoParaApagar(millis()); 
+	}
+
+	comprobarTiempoParaApagar(millis());
+}
+
+
+void activarVelasPorTipoDeMoneda(int euro)
+{
+	int velasEncendidas = euro;
+	
+	for (unsigned int i = 0; i < NUMDISPOSITIVOS; i++) {
+		for (unsigned int j = 0; j < NUMCANALES; j++) {
+
+			_timedAction.check();
+
+			if(_velas[i][j].activada || velasEncendidas <= 0) {
+				return;
+			}
+
+			_velas[i][j].activada = true;
+
+			if (!(i == 0 and j == 0)) {
+				_velas[i][j].inicio = millis();
+				_velas[i][j].fin = _velas[i][j].inicio + TIEMPOVELAENCENDIDA;
+				velasEncendidas--;
+
+				if (NUMVELASTOTAL > 0) {
+					NUMVELASTOTAL--;
+				}
+
+				_pwm[i].setPWM(_velas[i][j].numero, 0, 4016);
+				delay(50);
+				_pwm[i].setPWM(_velas[i][j].numero, 0, 0);
+				delay(50);
+				_pwm[i].setPWM(_velas[i][j].numero, 0, 4016);
+				delay(50);
+				_pwm[i].setPWM(_velas[i][j].numero, 0, 0);
+				delay(50);
+				_pwm[i].setPWM(_velas[i][j].numero, 0, 4016);
+				delay(50);
+				_pwm[i].setPWM(_velas[i][j].numero, 0, 0);
+				delay(50);
+				_pwm[i].setPWM(_velas[i][j].numero, 0, 4016);
+
+				if (velasEncendidas == false) {
+					break;
+				}
+			}
+		}
+	}
 }
 
 
 // FUNCION PARA ACTIVAR LAS VELAS SEGÚN LA MONEDA QUE RECIBA
-void activarVelas(byte moneda){
-  if(NUMVELASTOTAL >= 0 and NUMVELASTOTAL <= 72){ //Comprobar que el numero de velas que quedan está en su rango.
-    int velasEncendidas=0;
-    
-    //Moneda de 2 Euros
-    if(moneda >= 9){
-      velasEncendidas = DOSEUROS;
-      for (unsigned int i = 0 ; i < NUMDISPOSITIVOS ; i++){
-        for (unsigned int j = 0; j < NUMCANALES ; j++){
-          timedAction.check();
-          if(velas[i][j].activada == false and velasEncendidas > 0){
-            if( (i == 0) and (j == 0) ){
-              velas[i][j].activada = true;
-            }
-            else{
-              velas[i][j].activada = true;
-              velas[i][j].inicio = millis();
-              velas[i][j].fin = velas[i][j].inicio + TIEMPOVELAENCENDIDA;
-              velasEncendidas--;
-              if (NUMVELASTOTAL == 0){
-                NUMVELASTOTAL = 0;
-              }else{
-                NUMVELASTOTAL--;
-              }
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              if(velasEncendidas == false){
-                break;
-              }
-            }
-          }
-        }
-      }
+void activarVelas(byte moneda)
+{
+    if (!(NUMVELASTOTAL >= 0 && NUMVELASTOTAL <= 72)) {
+        // Si el número de velas no está en el rango, salir de la función
+        return;
     }
-    
-    //Moneda de 1 Euro
-    else if(moneda >= 7 and moneda < 9){
-      velasEncendidas = EURO;
-      for (unsigned int i = 0 ; i < NUMDISPOSITIVOS ; i++){
-        for (unsigned int j = 0; j < NUMCANALES ; j++){
-          timedAction.check();
-          if(velas[i][j].activada == false and velasEncendidas > 0){
-            if( (i == 0) and (j == 0) ){
-              velas[i][j].activada = true;
-            }
-            else{
-              velas[i][j].activada = true;
-              velas[i][j].inicio = millis();
-              velas[i][j].fin = velas[i][j].inicio + TIEMPOVELAENCENDIDA;
-              velasEncendidas--;
-              if (NUMVELASTOTAL == 0){
-                NUMVELASTOTAL = 0;
-              }else{
-                NUMVELASTOTAL--;
-              }
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              if(velasEncendidas == 0)
-                break;         
-            }
-          }
-        }
-      }
-    }
-    
-    //Moneda de 50 centimos
-    else if(moneda >= 5 and moneda < 7){
-      velasEncendidas = CINCUENTA;
-      for (unsigned int i = 0 ; i < NUMDISPOSITIVOS ; i++){
-        for (unsigned int j = 0; j < NUMCANALES ; j++){
-          timedAction.check();            
-          if(velas[i][j].activada == false and velasEncendidas > 0 ){
-            if( (i == 0) and (j == 0) ){
-              velas[i][j].activada = true;
-            }
-            else{  
-              velas[i][j].activada = true;
-              velas[i][j].inicio = millis();
-              velas[i][j].fin = velas[i][j].inicio + TIEMPOVELAENCENDIDA;
-              velasEncendidas--;
-              if (NUMVELASTOTAL == 0){
-                NUMVELASTOTAL = 0;
-              }else{
-                NUMVELASTOTAL--;
-              }
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              if(velasEncendidas == 0)
-                break;     
-            }
-          }
-        }
-      }
-    }
-    //Moneda de 20 centimos
-    else if(moneda >= 3 and moneda < 5){
-      velasEncendidas = VEINTE;
-      for (unsigned int i = 0 ; i< NUMDISPOSITIVOS ; i++){
-        for (unsigned int j = 0; j < NUMCANALES ; j++){
-          timedAction.check();            
-          if(velas[i][j].activada == false and velasEncendidas > 0){
-            if( (i == 0) and (j == 0) ){
-              velas[i][j].activada = true;
-            }
-            else{
-              velas[i][j].activada = true;
-              velas[i][j].inicio = millis();
-              velas[i][j].fin = velas[i][j].inicio + TIEMPOVELAENCENDIDA;
-              velasEncendidas--;
-              if (NUMVELASTOTAL == 0){
-                NUMVELASTOTAL = 0;
-              }else{
-                NUMVELASTOTAL--;
-              }
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 0);
-              delay(50);
-              pwm[i].setPWM(velas[i][j].numero, 0, 4016);
-              if(velasEncendidas == 0)
-                break; 
-            }
-          }
-        }
-      }
-    }
-    else{
-      moneda = 0;
-      creditos = 0;  
-    }
-  }//Fin de comprobar velas totales      
-}//Fin activar moneda
 
+	int velasEncendidas = 0;
 
-//Comprueba el tiempo que le quedan a las velas para apagarse.
-void comprobarTiempoParaApagar(unsigned long tiempo){
-  for (unsigned int i = 0; i < NUMDISPOSITIVOS; i++){
-    for (unsigned int j = 0; j < NUMCANALES; j++){
-      if (velas[i][j].activada == true and (tiempo > velas[i][j].fin)){
-        if( (i == 0) and (j == 0) ){//Dejar esta vela fija siempre.
-          velas[i][j].activada = true;
-        }
-        else{
-          velas[i][j].activada = false;
-          velas[i][j].inicio = 0;
-          velas[i][j].fin = 0;
-          velas[i][j].pwm = 0;
-          pwm[i].setPWM(velas[i][j].numero, 0, 0);
-          NUMVELASTOTAL++;
-          if(NUMVELASTOTAL >= 72){
-            NUMVELASTOTAL = 72;
-          }
-        }
-      }
-    }
-  }
+	//Moneda de 2 Euros
+	if (moneda >= 9) {
+		activarVelasPorTipoDeMoneda(DOSEUROS);
+	}
+	//Moneda de 1 Euro
+	else if(moneda >= 7 and moneda < 9) {
+		activarVelasPorTipoDeMoneda(EURO);
+	}
+	//Moneda de 50 centimos
+	else if(moneda >= 5 and moneda < 7) {
+		activarVelasPorTipoDeMoneda(CINCUENTA);
+	}
+	//Moneda de 20 centimos
+	else if(moneda >= 3 and moneda < 5) {
+		activarVelasPorTipoDeMoneda(VEINTE);
+	} else {
+		moneda = 0;
+		_creditos = 0;  
+	}
 }
 
 
+//Comprueba el tiempo que le quedan a las _velas para apagarse.
+void comprobarTiempoParaApagar(unsigned long tiempo)
+{
+	for (unsigned int i = 0; i < NUMDISPOSITIVOS; i++) {
+		for (unsigned int j = 0; j < NUMCANALES; j++) {
+			if (_velas[i][j].activada && tiempo > _velas[i][j].fin) {
+                if (i != 0 || j != 0) {
+                    // Desactivar la vela
+                    _velas[i][j].activada = false;
+                    _velas[i][j].inicio = 0;
+                    _velas[i][j].fin = 0;
+                    _velas[i][j].pwm = 0;
+                    _pwm[i].setPWM(_velas[i][j].numero, 0, 0);
+
+                    // Incrementar NUMVELASTOTAL y limitar a MAX_NUM_VELAS
+                    NUMVELASTOTAL++;
+                    if (NUMVELASTOTAL >= MAX_NUM_VELAS) {
+                        NUMVELASTOTAL = MAX_NUM_VELAS;
+                    }
+                }
+            }
+		}
+	}
+}
